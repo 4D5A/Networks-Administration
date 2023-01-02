@@ -220,7 +220,7 @@ Foreach ($DomainName in $DomainNames) {
         }
     }
 
-    $DKIMPrefixes = "default","s1","s2"
+    $DKIMPrefixes = "s1","s2"
     If ($MicrosoftTextDNSRecord) {
         $DKIMPrefixes += "selector1","selector2"
     }
