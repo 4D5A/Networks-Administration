@@ -99,7 +99,27 @@ If(-not($DnsIp)){
 $Filename = $File
 $Filepath = $ReportLocation
 
+Function ClearVariables() {
+    $MicrosoftTextDNSRecord = $null
+    $MailExchangerDNSRecord = $null
+    $EmailFilter = $null
+    $SPFRecord = $null
+    $SPFMode = $null
+    $DMARCRecord = $null
+    $DMARCMode = $null
+    $DKIMRecordNames = $null
+    $DKIMRecords = $null
+}
+
 Foreach ($DomainName in $DomainNames) {
+    
+    ClearVariables
+
+    $DKIMRecordNames = @()
+
+    $DKIMRecords = @()
+
+    $MicrosoftTextDNSRecord = Resolve-DnsName -Name $DomainName -Type TXT -Server $DnsIp -DnssecCd | Where-Object -Property Strings -match -Value "MS="
 
     # Section for Obtaining the lowest preference MX record for the DomainName
     $MailExchangerDNSRecord = Resolve-DnsName -Name $DomainName -Type MX -Server $DnsIp -DnssecCd | Sort-Object -Property Preference -Descending | Select-Object -Last 1 | Select-Object -ExpandProperty NameExchange
@@ -126,6 +146,10 @@ Foreach ($DomainName in $DomainNames) {
         If ($MailExchangerDNSRecord -match "hydra.sophos.com") {
             $EmailFilter = "Sophos"
         }
+        # Identify MX records that route incoming email to Yahoo
+        If ($MailExchangerDNSRecord -match "yahoodns.net") {
+            $EmailFilter = "Yahoo"
+        }
         # Identify MX records that route incoming email to an internal email server
         If ( ($MailExchangerDNSRecord -match $DomainName) -and ($EmailFilter -ne "Exchange Online") ) {
             $EmailFilter = "Internal Email Server"
@@ -137,10 +161,12 @@ Foreach ($DomainName in $DomainNames) {
         # Identify MX records that route incoming email to Google
         If ($MailExchangerDNSRecord -match "aspmx.l.google.com") {
             $EmailFilter = "Google"
+            $DKIMRecordNames = "google._domainkey.$DomainName"
         }
         # Identify MX records that route incoming email to GoDaddy
         If ($MailExchangerDNSRecord -match "secureserver.net") {
             $EmailFilter = "GoDaddy"
+            $DKIMRecordNames = "default._domainkey.$DomainName"
     }
 }
     If ($MailExchangerDNSRecord -eq $null) {
@@ -150,6 +176,7 @@ Foreach ($DomainName in $DomainNames) {
     # Section for Obtaining information about the Sender Policy Framework configuration in use at the DomainName
     $SPFRecordCount = (Resolve-DnsName -Name $DomainName -Type TXT -Server $DnsIp -DnssecCd | Where-Object -Property Strings -match -Value "spf1").count
     If ($SPFRecordCount -eq 0) {
+        $SPFMode = "None"
         $SPFRecord = "MISCONFIGURATION: No SPF record."
     }
     If ($SPFRecordCount -gt 0) {
@@ -169,6 +196,7 @@ Foreach ($DomainName in $DomainNames) {
     #Section for Obtaining information about the Domain-Based Message Authentication, Reporting & Conformance configuration in use at the DomainName
     $DMARCRecordCount = (Resolve-DnsName -Name _dmarc.$DomainName -Type TXT -Server $DnsIp -DnssecCd | Where-Object -Property Name -match -Value "_dmarc.$DomainName").count
     If ($DMARCRecordCount -eq 0) {
+        $DMARCMode = "None"
         $DMARCRecord = "MISCONFIGURATION: No DMARC record."
     }
     If ($DMARCRecordCount -gt 0) {
@@ -191,7 +219,40 @@ Foreach ($DomainName in $DomainNames) {
             }
         }
     }
-    $global:Content += [pscustomobject]@{DomainName = $DomainName; MailExchangerDNSRecord = $MailExchangerDNSRecord; EmailFilter = $EmailFilter; SPFRecord = $SPFRecord; SPFMode = $SPFMode; DMARCRecord = $DMARCRecord; DMARCMode = $DMARCMode}
+
+    $DKIMPrefixes = "default","s1","s2"
+    If ($MicrosoftTextDNSRecord) {
+        $DKIMPrefixes += "selector1","selector2"
+    }
+    Foreach ($DKIMPrefix in $DKIMPrefixes) {
+        $DKIMRecordName = (Resolve-DnsName -Name "$DKIMPrefix._domainkey.$DomainName" -Type TXT -Server $DnsIp -DnssecCd).NameHost
+        If ($DKIMRecordName) {
+            $DKIMRecordNames += $DKIMRecordName
+        }
+    }
+    $DKIMRecordCount = ($DKIMRecordNames).Count
+    If ($DKIMRecordCount -eq 0) {
+        $DKIMRecordNames = "None"
+        $DKIMRecords = "MISCONFIGURATION: No DKIM record."
+    }
+    If ($DKIMRecordCount -gt 0) {
+        Foreach ($DKIMRecordName in $DKIMRecordNames) {
+            $DKIMRecords += (Resolve-DnsName -Name "$DKIMRecordName" -Type TXT -Server $DnsIp -DnssecCd).Strings
+        }
+    }
+    
+    $global:Content += [PSCustomObject]@{
+        DomainName = $DomainName;
+        MicrosoftDomainNameValidated = If ($MicrosoftTextDNSRecord) {"Yes"} Else {"No"};
+        MailExchangerDNSRecord = $MailExchangerDNSRecord;
+        EmailFilter = $EmailFilter;
+        SPFRecord = $SPFRecord;
+        SPFMode = $SPFMode;
+        DMARCRecord = $DMARCRecord;
+        DMARCMode = $DMARCMode;
+        DKIMRecordNames = [system.String]::Join(", ", $DKIMRecordNames)
+        DKIMRecords = [system.String]::Join(", ", $DKIMRecords)
+    }
 
 }
 
@@ -203,5 +264,5 @@ If ($Details) {
     $global:Content | Format-Table
 }
 Else {
-    $global:Content | Select-Object DomainName, MailExchangerDNSRecord, EmailFilter, SPFMode, DMARCMode | Format-Table
+    $global:Content | Select-Object DomainName, MailExchangerDNSRecord, EmailFilter, SPFMode, DMARCMode, DKIMRecordNames, DKIMRecords | Format-Table
 }
