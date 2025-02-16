@@ -33,11 +33,15 @@ function Query-OpenAI {
         [string]$Prompt
     )
     $apiKey = "Your-OpenAI-API-Key"
-    $apiUrl = "https://api.openai.com/v1/completions"
+    $apiUrl = "https://api.openai.com/v1/chat/completions"
 
     $body = @{
-        model = "text-davinci-003"
-        prompt = $Prompt
+        model = "gpt-4"
+        messages = @(@{
+            role = "system"; content = "You are an AI assistant that provides cybersecurity and sales recommendations based on DNS records."
+        }, @{
+            role = "user"; content = $Prompt
+        })
         max_tokens = 1024
         temperature = 0.7
     } | ConvertTo-Json -Depth 10
@@ -49,7 +53,7 @@ function Query-OpenAI {
 
     try {
         $response = Invoke-RestMethod -Uri $apiUrl -Method Post -Headers $headers -Body $body
-        return $response.choices.text.Trim()
+        return $response.choices[0].message.content.Trim()
     } catch {
         Write-Error "Failed to query OpenAI API: $_"
         return $null
@@ -79,42 +83,11 @@ function Generate-HtmlReport {
 </head>
 <body>
     <h1>DNS Report for $Domain</h1>
-    <h2>MX Records</h2>
-    <table>
-        <tr><th>Preference</th><th>Exchange</th></tr>
+    <h2>DNS Records</h2>
+    <pre>$Recommendations</pre>
+</body>
+</html>
 "@
-    foreach ($record in $MXRecords) {
-        $html += "<tr><td>$($record.Preference)</td><td>$($record.Exchange)</td></tr>"
-    }
-    $html += "</table>"
-
-    $html += "<h2>SPF Records</h2><table><tr><th>SPF Record</th></tr>"
-    foreach ($record in $SPFRecords) {
-        $html += "<tr><td>$($record.Strings)</td></tr>"
-    }
-    $html += "</table>"
-
-    $html += "<h2>DMARC Records</h2><table><tr><th>DMARC Record</th></tr>"
-    foreach ($record in $DMARCRecords) {
-        $html += "<tr><td>$($record.Strings)</td></tr>"
-    }
-    $html += "</table>"
-
-    $html += "<h2>DKIM Records</h2><table><tr><th>DKIM Record</th></tr>"
-    foreach ($record in $DKIMRecords) {
-        $html += "<tr><td>$($record.Strings)</td></tr>"
-    }
-    $html += "</table>"
-
-    $html += "<h2>TXT Records</h2><table><tr><th>TXT Record</th></tr>"
-    foreach ($record in $TXTRecords) {
-        $html += "<tr><td>$($record.Strings)</td></tr>"
-    }
-    $html += "</table>"
-
-    $html += "<h2>Recommendations and Insights</h2><pre>$Recommendations</pre>"
-
-    $html += "</body></html>"
 
     return $html
 }
